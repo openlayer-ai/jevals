@@ -73,6 +73,20 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str], Any]] = [
     ("BR_CPF", re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b"), lambda m: cpf_ok(m)),
 ]
 
+# Presidio's default recognizers cover far more than the identifier types above
+# (DATE_TIME, LOCATION, PERSON, URL, ...). Restricting it to the types that have
+# a regex counterpart here keeps "install the pii extra" strictly additive
+# instead of introducing new false positives (a shipping date is not PII).
+_PRESIDIO_ENTITIES = [
+    "CREDIT_CARD",
+    "EMAIL_ADDRESS",
+    "IBAN_CODE",
+    "IP_ADDRESS",
+    "PHONE_NUMBER",
+    "US_PASSPORT",
+    "US_SSN",
+]
+
 _PHI_PATTERNS: list[tuple[str, re.Pattern[str], Any]] = [
     ("US_NPI", re.compile(r"\b(?:NPI[:#\s]*)?(\d{10})\b"), lambda m: npi_ok(re.sub(r"\D", "", m)[-10:])),
     (
@@ -207,11 +221,12 @@ def _presidio_scan(text: str, entities: list[str] | None, threshold: float) -> l
 def detect_pii(text: str, threshold: float = 0.5, use_presidio: bool = True) -> list[Entity]:
     if not text:
         return []
-    ents = _presidio_scan(text, None, threshold) if use_presidio else None
+    ents = _presidio_scan(text, _PRESIDIO_ENTITIES, threshold) if use_presidio else None
     if ents is None:
         ents = _scan(text, _PII_PATTERNS)
-    else:  # presidio lacks BR CPF and checksum-validated cards in some configs; add ours
-        ents += _scan(text, [p for p in _PII_PATTERNS if p[0] in ("BR_CPF",)])
+    else:  # regexes are a floor Presidio can miss (threshold boundaries, BR CPF, card
+        # checksums), not a fallback for when it finds nothing; _dedupe resolves overlaps.
+        ents += _scan(text, _PII_PATTERNS)
     return _dedupe(ents)
 
 
