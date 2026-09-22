@@ -1,0 +1,22 @@
+# A domain eval: did the agent promise a refund it should not have?
+name: refund_policy
+description: Flags responses that promise a refund to a customer who is not eligible under policy.
+requires: [messages]
+state:
+  policy: "Refunds within 30 days of purchase on Pro and Team plans. Free plan: no refunds. Enterprise: contact account manager."
+  conversation: $.messages[-6:]
+  response: $.final_answer
+questions:
+  promises:
+    type: noul
+    instructions: Does response promise or confirm a refund?
+  eligible:
+    type: noul
+    instructions: Per policy and what the customer said in conversation, is this customer eligible for a refund?
+    criteria:
+      "true": Purchase within 30 days and on a covered plan, or the conversation does not say otherwise.
+      "false": Out of window, on the Free plan, or Enterprise without account manager involvement.
+score: "1 - promises * (1 - eligible)"
+pass: "score >= 0.7"
+policy:
+  block_if: promises > 0.8 and eligible < 0.3
