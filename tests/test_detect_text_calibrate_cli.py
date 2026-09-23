@@ -53,6 +53,55 @@ def test_detectors_and_redact():
     ).endswith("1111")
 
 
+def test_pii_union_covers_presidio_misses(monkeypatch):
+    """detect_pii must not drop entities Presidio misses at its own threshold boundary.
+
+    Regression: the regex floor used to get filtered down to only BR_CPF once
+    Presidio ran, so anything Presidio missed (a phone number scoring just
+    under the cutoff, an SSN it never flagged) silently disappeared instead
+    of falling back to the regex scan.
+    """
+    text = "Contact support@acme.com or call 555-123-4567, ssn 123-45-6789."
+    start = text.index("support@acme.com")
+    presidio_result = [
+        {
+            "type": "EMAIL_ADDRESS",
+            "text": "support@acme.com",
+            "start": start,
+            "end": start + len("support@acme.com"),
+            "score": 1.0,
+        }
+    ]
+    monkeypatch.setattr(
+        "jevals.security._detect._presidio_scan",
+        lambda text, entities, threshold: presidio_result,
+    )
+    types = {e["type"] for e in detect_pii(text, use_presidio=True)}
+    assert {"EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN"} <= types
+
+
+def test_pii_restricts_presidio_to_curated_entity_types(monkeypatch):
+    """Presidio's full NER surface must not leak into PII detection.
+
+    Regression: detect_pii asked Presidio for every entity type it supports
+    (entities=None), including ones this project never modeled as PII, like
+    DATE_TIME ("Tuesday" in a shipping update) or PERSON. Only types that
+    have a regex counterpart in _PII_PATTERNS should ever be requested.
+    """
+    captured = {}
+
+    def fake_scan(text, entities, threshold):
+        captured["entities"] = entities
+        return []
+
+    monkeypatch.setattr("jevals.security._detect._presidio_scan", fake_scan)
+    detect_pii("Your order shipped and should arrive Tuesday.", use_presidio=True)
+    assert captured["entities"] is not None
+    assert "DATE_TIME" not in captured["entities"]
+    assert "PERSON" not in captured["entities"]
+    assert {"EMAIL_ADDRESS", "US_SSN", "CREDIT_CARD", "PHONE_NUMBER"} <= set(captured["entities"])
+
+
 def test_calibrate_threshold_table():
     rows = []
     for i in range(40):
