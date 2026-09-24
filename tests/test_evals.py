@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from jevals import MockBackend, Sample, evaluate
+from jevals import Gate, MockBackend, Sample, evaluate
 from jevals.agent import (
     ArgumentValidity,
     GoalCompletion,
@@ -167,6 +167,34 @@ def test_pii_redact_and_not_personal():
     assert ev.decide(r.pii, Sample(output=text)) == "modify"
     r = evaluate({"output": "nothing here"}, [PII()], backend=MockBackend())
     assert r.pii.passed and r.pii.detail == "no entities"
+
+
+def test_pii_phi_default_surface_follows_payload():
+    # A gate over a tool result or a user input has no assistant output yet. The default
+    # surface must scan the text that is present, not an empty final_answer.
+    phi_text = "Patient Jane (MRN: 44812) was diagnosed with diabetes, contact jane@example.com"
+    user = [{"role": "user", "content": "Where is my order?"}]
+    d = Gate(PHI(action="redact"), backend=MockBackend(answers={"phi.phi": 0.9})).check(
+        {"tool_result": phi_text, "messages": user}
+    )
+    assert d.action == "modify" and "jane@example.com" not in d.value and "<EMAIL_ADDRESS>" in d.value
+    # Input guardrail shape, with an earlier clean assistant turn in the history.
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "Hello, how can I help?"},
+        {"role": "user", "content": "my ssn is 123-45-6789"},
+    ]
+    d = Gate(PII(action="redact"), backend=MockBackend(answers={"pii.personal": 0.9})).check(
+        {"messages": history, "input": "my ssn is 123-45-6789"}
+    )
+    assert d.action == "modify" and d.value == "my ssn is <US_SSN>"
+    d = Gate(SecretsExposure(action="redact"), backend=MockBackend()).check(
+        {"tool_result": "key: AKIAJ7Q2X9LMN4P8R6TB", "messages": user}
+    )
+    assert d.action == "modify" and d.value == "key: ****************R6TB"
+    # With an assistant answer present, the default is still the output.
+    r = evaluate({"input": "q", "output": "mail jane@example.com"}, [PII()], backend=MockBackend())
+    assert r.pii.evidence["entities"][0]["text"] == "jane@example.com"
 
 
 def test_phi_needs_health_context():

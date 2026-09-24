@@ -11,7 +11,22 @@ from ._detect import detect_phi, detect_pii, detect_secrets, redact
 Surface = str  # "input" | "output" | "tool_result" | "all"
 
 
-def _surface_text(s: Sample, surface: Surface) -> str:
+def _default_surface(s: Sample) -> Surface:
+    """The text a gate is about to hand on. Same key order as the gate's payload, so a
+    redacted value replaces the text it was scanned from. A plain message trace has none
+    of these keys and falls through to the final answer."""
+    if s.get("tool_result") is not None:
+        return "tool_result"
+    if s.get("output") is not None or s.get("final_answer") is not None:
+        return "output"
+    if s.get("input") is not None:
+        return "input"
+    return "output"
+
+
+def _surface_text(s: Sample, surface: Surface | None) -> str:
+    if surface is None:
+        surface = _default_surface(s)
     if surface == "input":
         return s.last_user_message
     if surface == "output":
@@ -160,6 +175,7 @@ class PII(Eval):
     """Personal data in the text. Entity detection first, then one question: is this about an identifiable person?
 
     action="redact" makes gates return a MODIFY decision with entities replaced.
+    `surface` defaults to whatever the sample carries: tool_result, else output, else input.
     """
 
     name = "pii"
@@ -168,7 +184,7 @@ class PII(Eval):
 
     def __init__(
         self,
-        surface: Surface = "output",
+        surface: Surface | None = None,
         action: str | None = None,
         entities: list[str] | None = None,
         threshold: float = 0.5,
@@ -311,7 +327,7 @@ class SecretsExposure(Eval):
     category = "security"
     requires = ("messages",)
 
-    def __init__(self, surface: Surface = "output", action: str | None = None, **kw: Any):
+    def __init__(self, surface: Surface | None = None, action: str | None = None, **kw: Any):
         super().__init__(**kw)
         self.surface, self.action = surface, action
 
