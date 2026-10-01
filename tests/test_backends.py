@@ -174,6 +174,7 @@ def test_resolver(monkeypatch):
         "TYPESAFE_API_KEY",
         "AI_GATEWAY_API_KEY",
         "KEV_BASE_URL",
+        "EIKOS_BASE_URL",
         "OPENROUTER_API_KEY",
         "OPENAI_API_KEY",
         "VERCEL_OIDC_TOKEN",
@@ -191,6 +192,15 @@ def test_resolver(monkeypatch):
         and kev.name == "kev"
         and kev.price_per_m_input == 0.0
     )
+    eikos = resolve("eikos://localhost:8000")
+    assert (
+        isinstance(eikos, TypeSafeBackend)
+        and eikos.base_url == "http://localhost:8000"
+        and eikos.name == "eikos"
+        and eikos.price_per_m_input == 0.0
+    )
+    monkeypatch.setenv("EIKOS_BASE_URL", "http://gpu-box:8000")
+    assert resolve().name == "eikos" and resolve().base_url == "http://gpu-box:8000"
     monkeypatch.setenv("TYPESAFE_API_KEY", "x")
     assert resolve().name == "jev"
     monkeypatch.setenv("JEVALS_BACKEND", "mock")

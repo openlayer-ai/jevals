@@ -1,7 +1,8 @@
 """Backends. Anything that answers typed questions about state.
 
 Resolution order when `backend` is not given:
-  JEVALS_BACKEND (explicit spec) > TYPESAFE_API_KEY > AI_GATEWAY_API_KEY > KEV_BASE_URL > OPENROUTER_API_KEY / OPENAI_API_KEY
+  JEVALS_BACKEND (explicit spec) > TYPESAFE_API_KEY > AI_GATEWAY_API_KEY > KEV_BASE_URL > EIKOS_BASE_URL
+  > OPENROUTER_API_KEY / OPENAI_API_KEY
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ _cache: dict[str, Backend] = {}
 def resolve(spec: str | Backend | None = None) -> Backend:
     """Turn a backend spec into a Backend.
 
-    Specs: "jev" | "typesafe" | "vercel" | "kev" | "kev://host:port" | "laya" | "laya:<hf-id>"
+    Specs: "jev" | "typesafe" | "vercel" | "kev" | "kev://host:port" | "eikos" | "eikos://host:port"
+           | "laya" | "laya:<hf-id>"
            | "llm:<model>" | "openrouter:<model>" | "mock" | full http(s) URL to a /v1/systemone server
     """
     if isinstance(spec, Backend):
@@ -41,12 +43,14 @@ def _autodetect() -> str:
         return "vercel"
     if env.get("KEV_BASE_URL"):
         return "kev"
+    if env.get("EIKOS_BASE_URL"):
+        return "eikos"
     if env.get("OPENROUTER_API_KEY"):
         return "llm:" + env.get("JEVALS_LLM_MODEL", "openai/gpt-4.1-mini")
     if env.get("OPENAI_API_KEY"):
         return "llm:" + env.get("JEVALS_LLM_MODEL", "gpt-4.1-mini")
     raise BackendError(
-        "No backend configured. Set one of TYPESAFE_API_KEY, AI_GATEWAY_API_KEY, KEV_BASE_URL, "
+        "No backend configured. Set one of TYPESAFE_API_KEY, AI_GATEWAY_API_KEY, KEV_BASE_URL, EIKOS_BASE_URL, "
         "OPENROUTER_API_KEY, or pass backend=... (e.g. backend='mock')."
     )
 
@@ -69,6 +73,13 @@ def _build(spec: str) -> Backend:
         if not url.startswith("http"):
             url = "http://" + url
         return TypeSafeBackend(base_url=url, api_key="local", model="kev-latest", name="kev")
+    if name == "eikos":
+        from .typesafe import TypeSafeBackend
+
+        url = rest.lstrip("/") if rest else os.environ.get("EIKOS_BASE_URL", "localhost:8000")
+        if not url.startswith("http"):
+            url = "http://" + url
+        return TypeSafeBackend(base_url=url, api_key="local", model="eikos", name="eikos")
     if name in ("http", "https"):
         from .typesafe import TypeSafeBackend
 

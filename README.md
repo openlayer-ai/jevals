@@ -2,7 +2,7 @@
 
 Evals and guardrails for agents, using Jev-style decision models instead of an LLM judge. All the evals for a trace go out as one request that costs a few thousandths of a cent and comes back in a few hundred milliseconds, so you can run them on every trace and inside the agent loop.
 
-Works with Jev through the TypeSafe or Vercel APIs, with Kev or Laya running locally on a Mac, or with a regular chat LLM if that's all you have (slower, costs more).
+Works with Jev through the TypeSafe or Vercel APIs, with Kev or Laya running locally on a Mac, with Eikos on your own GPU, or with a regular chat LLM if that's all you have (slower, costs more).
 
 ```bash
 pip install jevals
@@ -42,7 +42,7 @@ Agents make this harder. The traces are long, there's more to check (did it pick
 
 [Jev](https://typesafe.ai) doesn't generate text. You send it some state and a set of typed questions (yes/no, pick one of these, score on this rubric) and it returns a calibrated probability for each one in a single forward pass. The questions are evaluated independently and in parallel, so asking 40 costs about the same latency as asking one. Pricing is $0.042 per million input tokens with no output tokens. Through Vercel's gateway we measured p50 244ms, p95 371ms per request.
 
-There are already open-weight models speaking the same API: [Kev](https://github.com/jaredpalmer/kev) (Qwen3, runs on a Mac) and [Laya](https://github.com/mizorewww/laya-mlx) (ModernBERT, about 10ms on Apple Silicon). The request shape, `state + {id: {type, instructions, criteria}}`, looks like it's going to stick.
+There are already open-weight models speaking the same API: [Kev](https://github.com/jaredpalmer/kev) (Qwen3, runs on a Mac), [Laya](https://github.com/mizorewww/laya-mlx) (ModernBERT, about 10ms on Apple Silicon) and [Eikos](https://github.com/caiovicentino/eikos) (Qwen3.5, 4B and 27B, MIT, served by vLLM on one GPU or by PyTorch on a Mac). The request shape, `state + {id: {type, instructions, criteria}}`, looks like it's going to stick.
 
 Most of what an LLM judge is asked to decide fits those three question types. "Is this claim supported by the evidence" is a yes/no. "Which tool should have been called" is a choice. "How well did this answer the question" is a rubric. The judge writes a paragraph of reasoning and a JSON blob, but the thing you keep is a label.
 
@@ -84,10 +84,11 @@ Backends resolve from the environment, in this order:
 | `TYPESAFE_API_KEY` | Jev, direct | requires a TypeSafe account |
 | `AI_GATEWAY_API_KEY` | Jev via Vercel AI Gateway | no waitlist; the easiest way to get Jev |
 | `KEV_BASE_URL` | Kev, self-hosted | `python -m kev.serve --run jaredpalmer/kev-4b` on a 32GB Mac |
+| `EIKOS_BASE_URL` | Eikos, self-hosted | `serve_vllm.sh` + `serve.py` from [caiovicentino1/Eikos-4B](https://huggingface.co/caiovicentino1/Eikos-4B) or [-27B](https://huggingface.co/caiovicentino1/Eikos-27B), one GPU |
 | `JEVALS_BACKEND=laya` | Laya, in-process | `pip install "jevals[laya]"`, Apple Silicon, offline |
 | `OPENROUTER_API_KEY` | any chat LLM, emulated | `JEVALS_LLM_MODEL=openai/gpt-4.1-mini`; slower, costs more, no special access needed |
 
-Or pass one explicitly: `evaluate(sample, evals, backend="kev://localhost:8009")`, `backend="llm:anthropic/claude-haiku-4.5"`, or `backend="mock"` in tests. You can swap backends without touching the evals, but re-run `jevals calibrate` when you do, since the probabilities won't line up across models.
+Or pass one explicitly: `evaluate(sample, evals, backend="kev://localhost:8009")`, `backend="eikos://localhost:8000"`, `backend="llm:anthropic/claude-haiku-4.5"`, or `backend="mock"` in tests. You can swap backends without touching the evals, but re-run `jevals calibrate` when you do, since the probabilities won't line up across models.
 
 Anything that speaks the System One wire format can be a backend. Chat LLMs get emulated through a prompt that asks for probabilities. For anything else, subclass `Backend`.
 
@@ -185,12 +186,13 @@ indirect_injection    6,015    0.99    99.6%      24 hits
 | Ragas, gpt-4.1-mini | 6.0 LLM + embeddings | 4,390 | 530 | $2.60 | 22 to 35s |
 | jevals, gpt-4.1-mini emulating Jev | 1.0 | 736 | 106 | $0.46 | 4s |
 | jevals, Jev | 1.0 | 824 | 148, not billed | $0.03 | 0.8s |
+| jevals, Eikos-27B-FP8 on one GPU | 1.0, local | 2,240 | 0 | $0 | 4.0s |
 | jevals, Kev-4B on a Mac (estimate) | 1, local | ~800 | 0 | $0 | ~6s |
 | jevals, Laya on a Mac (estimate) | 1, local | ~800 | 0 | $0 | ~1s |
 
-All three measured rows agree on the verdicts: faithfulness 0.90 to 0.92, context precision and recall 1.0. Ragas answer relevancy came out at 0.64 because OpenRouter returned one completion where Ragas asks for three; on the OpenAI API that metric is three calls, so real Ragas is closer to 8 requests per sample. LLM cost is at list price. Jev cost is input tokens at $0.042 per million; the gateway reports output tokens but doesn't charge for them.
+All four measured rows agree on the verdicts: faithfulness 0.90 to 0.92, context precision and recall 1.0. Ragas answer relevancy came out at 0.64 because OpenRouter returned one completion where Ragas asks for three; on the OpenAI API that metric is three calls, so real Ragas is closer to 8 requests per sample. LLM cost is at list price. Jev cost is input tokens at $0.042 per million; the gateway reports output tokens but doesn't charge for them.
 
-Per request, Jev came back at p50 244ms and p95 371ms. In one of the runs the gateway hung on a few connections ("upstream provider is currently experiencing high demand"); the client times out at 15s and retries with backoff, so the run finished, but p95 for that run was a minute. The Kev and Laya rows are the latencies their authors publish, multiplied out; they haven't been run here yet.
+Per request, Jev came back at p50 244ms and p95 371ms. In one of the runs the gateway hung on a few connections ("upstream provider is currently experiencing high demand"); the client times out at 15s and retries with backoff, so the run finished, but p95 for that run was a minute. The Eikos row was run on one RTX PRO 6000 with vLLM 0.30 (`serve_vllm.sh` + `serve.py` from the model repo): one request at a time it answered at p50 270ms and p95 330ms, and at the bench's concurrency of 8 the single GPU is the bottleneck (p50 1.45s). Its input count is higher because each question goes out as its own prompt with the state in it; the prefix cache computes the shared state once. The Kev and Laya rows are the latencies their authors publish, multiplied out; they haven't been run here yet.
 
 If you add six security evals on the jevals side, you're adding questions to the same request: same latency, a few hundred more input tokens. On the Ragas side it would be six more LLM calls.
 
