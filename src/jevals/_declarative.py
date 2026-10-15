@@ -50,6 +50,19 @@ _TPL = re.compile(r"^\s*\{\{\s*([\w.\[\]:-]+)\s*\}\}\s*$")
 _INLINE = re.compile(r"\{\{\s*([\w.\[\]:-]+)\s*\}\}")
 _PATH = re.compile(r"^\$\.?([\w.\[\]:-]*)$")
 _TOKEN = re.compile(r"\.?([\w-]+)|\[([^\]]*)\]")
+_COVER = re.compile(r"^(r-[0-9a-f]{6}|observed)$")
+
+
+def _covers(raw: Any, where: str) -> list[str]:
+    """`covers`: the contract rule ids a question tests (see jevals.contract)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(c, str) for c in raw):
+        raise ValueError(f"{where}: covers must be a list of rule ids, e.g. [r-3f2a9c]")
+    bad = [c for c in raw if not _COVER.match(c)]
+    if bad:
+        raise ValueError(f"{where}: covers entries must be rule ids like r-3f2a9c or 'observed', got {bad}")
+    return list(raw)
 
 
 def _lookup(s: Sample, path: str) -> Any:
@@ -130,7 +143,21 @@ class DeclarativeEval(Eval):
         self.requires = tuple(spec.get("requires", ()))  # type: ignore[misc]
         self.threshold = float(spec.get("threshold", 0.5))  # type: ignore[misc]
         self._state = spec.get("state", {})
-        self._questions = {qid: question_from_dict(q) for qid, q in spec.get("questions", {}).items()}
+        eval_covers = _covers(spec.get("covers"), f"eval {self.name!r}")
+        eval_why = spec.get("why")
+        self._questions = {}
+        self.covers: dict[str, list[str]] = {}
+        self.why: dict[str, str] = {}
+        for qid, q in spec.get("questions", {}).items():
+            q = dict(q)  # a copy: the spec is written back verbatim by author_eval
+            own = q.pop("covers", None)
+            why = q.pop("why", None) or eval_why
+            self.covers[qid] = _covers(own, f"question {qid!r}") if own is not None else list(eval_covers)
+            if why:
+                self.why[qid] = str(why)
+            if "observed" in self.covers[qid] and not why:
+                raise ValueError(f"question {qid!r}: covers [observed] needs a why")
+            self._questions[qid] = question_from_dict(q)
         self._score = spec.get("score")
         self._pass = spec.get("pass")
         # policy: {allow_if, block_if, escalate_if, modify_if, else}; legacy `gate: {block, escalate, modify}` also accepted
@@ -240,6 +267,8 @@ class DeclarativeEval(Eval):
         d = super().describe()
         d["source"] = self.source
         d["questions"] = {k: q.model_dump() for k, q in self._questions.items()}
+        if any(self.covers.values()):
+            d["covers"] = {k: v for k, v in self.covers.items() if v}
         return d
 
 
@@ -276,6 +305,13 @@ def eval_schema() -> dict[str, Any]:
                     {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 10},
                 ],
             },
+            "covers": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^(r-[0-9a-f]{6}|observed)$"},
+                "description": "Rule ids from contract.yaml this question tests (jevals contract rules). "
+                "'observed' for behaviour the prompt implies but doesn't state; needs `why`.",
+            },
+            "why": {"type": "string", "description": "Why an 'observed' question exists."},
         },
     }
     return {
@@ -303,6 +339,13 @@ def eval_schema() -> dict[str, Any]:
                 "description": "Expression over question ids -> 0..1. noul ids are probabilities; choice ids expose .<option> probabilities and .choice; score ids are normalized 0..1.",
             },
             "pass": {"type": "string", "description": "Boolean expression over question ids and `score`."},
+            "covers": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^(r-[0-9a-f]{6}|observed)$"},
+                "description": "Rule ids from contract.yaml this question tests (jevals contract rules). "
+                "'observed' for behaviour the prompt implies but doesn't state; needs `why`.",
+            },
+            "why": {"type": "string", "description": "Why an 'observed' question exists."},
             "threshold": {"type": "number", "default": 0.5},
             "answer": {
                 "type": "string",

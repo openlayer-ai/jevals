@@ -126,7 +126,10 @@ def build_server() -> Any:
 
     @mcp.tool()
     def author_eval(spec: dict[str, Any], path: str, overwrite: bool = False) -> dict[str, Any]:
-        """Validate an eval spec and write it to `path` as YAML. Use `schema` for the format."""
+        """Validate an eval spec and write it to `path` as YAML. Use `schema` for the format.
+        For contract evals: one rule per question; cite it with covers: [r-…] (ids from
+        contract_rules); write the question so true means the agent did the named thing, and
+        check an absence as a question that is true when the violation happened, never "No …"."""
         import yaml
 
         ev = DeclarativeEval(spec)
@@ -136,6 +139,64 @@ def build_server() -> Any:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(yaml.safe_dump(spec, sort_keys=False, allow_unicode=True, width=120))
         return {"ok": True, "path": str(p), "eval": ev.describe()}
+
+    @mcp.tool()
+    async def contract_rules(
+        prompt: str | None = None,
+        path: str | None = None,
+        trace: str | None = None,
+        out: str | None = None,
+        use_model: bool = True,
+        backend: str | None = None,
+    ) -> dict[str, Any]:
+        """Split an agent's system prompt into rules with stable ids (r-3f2a9c). Give the prompt
+        text, a file `path`, or a JSONL `trace`. Write evals whose questions cite the ids in
+        `covers`, one rule per question, then run contract_check."""
+        from ..contract import aextract_rules, prompt_from_trace
+
+        if trace:
+            text, source = prompt_from_trace(trace), f"trace:{trace}#0"
+        elif path:
+            text, source = Path(path).read_text(), path
+        elif prompt:
+            text, source = prompt, None
+        else:
+            return {"ok": False, "errors": ["give prompt, path or trace"]}
+        ex = await aextract_rules(text, backend=backend, use_model=use_model, source=source)
+        if out:
+            ex.contract.dump(out)
+        return {
+            "ok": True,
+            "rules": [r.model_dump() for r in ex.contract.rules],
+            "dropped": ex.dropped,
+            "written": out,
+            "usage": str(ex.usage),
+        }
+
+    @mcp.tool()
+    async def contract_check(
+        contract: str,
+        evals: list[str],
+        prompt: str | None = None,
+        use_model: bool = True,
+        strict: bool = False,
+        backend: str | None = None,
+    ) -> dict[str, Any]:
+        """Check evals against contract.yaml: uncovered rules, stale citations, rules edited under
+        their old id, changed prompt
+        (pass the current prompt text), and with use_model, citations a decision model doubts."""
+        from .._declarative import load_evals
+        from ..contract import acheck_coverage, load_contract
+
+        loaded = [e for p in evals for e in load_evals(p)]
+        rep = await acheck_coverage(
+            load_contract(contract), loaded, backend=backend, use_model=use_model, prompt=prompt
+        )
+        return {
+            "ok": not rep.failed(strict),
+            "failed": rep.failed(strict),
+            "report": rep.model_dump(mode="json"),
+        }
 
     @mcp.tool()
     def schema() -> dict[str, Any]:
