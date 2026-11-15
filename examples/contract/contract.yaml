@@ -1,0 +1,16 @@
+prompt_sha256: 0b06e7e26c4e05befc8d5c904c8deee771b44986e010e06399978b7a564346a3
+source: examples/contract/support_prompt.md
+rules:
+- id: r-fff4aa
+  text: Ask for the order number when the customer has not given one.
+- id: r-520955
+  text: Look the order up with `lookup_order` before you answer any question about it.
+- id: r-4c9050
+  text: Never promise a refund before checking that the order is inside the 30-day refund window.
+- id: r-74b6c2
+  text: Escalate to a human when the customer asks for more than $200 back.
+- id: r-9756ad
+  text: Reply in the customer's language.
+excluded:
+- id: r-25880d
+  text: You are the support agent for Acme, an online store for kitchen equipment.

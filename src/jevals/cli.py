@@ -191,6 +191,56 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
     return 0
 
 
+def _contract_prompt(a: argparse.Namespace) -> tuple[str, str]:
+    from .contract import prompt_from_trace
+
+    if getattr(a, "from_trace", None) and getattr(a, "prompt", None):
+        raise ValueError("give a prompt file or --from-trace, not both")
+    if getattr(a, "from_trace", None):
+        return prompt_from_trace(a.from_trace, a.trace_index), f"trace:{a.from_trace}#{a.trace_index}"
+    path = getattr(a, "prompt", None)
+    if not path:
+        raise ValueError("give a prompt file or --from-trace")
+    return Path(path).read_text(), str(path)
+
+
+def cmd_contract_rules(a: argparse.Namespace) -> int:
+    from .contract import extract_rules
+
+    try:
+        prompt, source = _contract_prompt(a)
+        ex = extract_rules(prompt, backend=a.backend, use_model=not a.no_model, source=source)
+    except (ValueError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if a.out:
+        ex.contract.dump(a.out)
+        print(f"wrote {a.out}: {len(ex.contract.rules)} rules", file=sys.stderr)
+    else:
+        print(ex.contract.to_yaml(), end="")
+    for line in ex.dropped:
+        print(f"dropped: {line}", file=sys.stderr)
+    if ex.usage.requests:
+        print(str(ex.usage), file=sys.stderr)
+    return 0
+
+
+def cmd_contract_check(a: argparse.Namespace) -> int:
+    from ._declarative import load_evals
+    from .contract import check_coverage, load_contract
+
+    try:
+        contract = load_contract(a.contract)
+        evals = [e for p in a.evals for e in load_evals(p)]
+        prompt = _contract_prompt(a)[0] if (a.prompt or a.from_trace) else None
+        rep = check_coverage(contract, evals, backend=a.backend, use_model=not a.no_model, prompt=prompt)
+    except (ValueError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(rep.model_dump_json(indent=2) if a.json else rep.table())
+    return 1 if rep.failed(strict=a.strict) else 0
+
+
 def cmd_mcp(a: argparse.Namespace) -> int:
     from .integrations import mcp_server
 
@@ -290,6 +340,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     b.add_argument("--model", default="gpt-4.1-mini")
     b.set_defaults(fn=cmd_bench)
+
+    ct = sub.add_parser("contract", help="rules from a system prompt, and which questions cover them")
+    csub = ct.add_subparsers(dest="contract_cmd", required=True)
+    cr = csub.add_parser("rules", help="split a system prompt into rules with stable ids")
+    cr.add_argument("prompt", nargs="?")
+    cr.add_argument("--from-trace", metavar="JSONL")
+    cr.add_argument("--trace-index", type=int, default=0)
+    cr.add_argument("-o", "--out")
+    cr.add_argument("--no-model", action="store_true", help="keep every line; no request")
+    cr.set_defaults(fn=cmd_contract_rules)
+    cc = csub.add_parser("check", help="uncovered rules, stale citations, edited rules, prompt changes")
+    cc.add_argument("contract")
+    cc.add_argument("evals", nargs="+", help="eval files or directories")
+    src = cc.add_mutually_exclusive_group()
+    src.add_argument("--prompt", help="the current prompt, to find rules that changed")
+    src.add_argument("--from-trace", metavar="JSONL")
+    cc.add_argument("--trace-index", type=int, default=0)
+    cc.add_argument("--no-model", action="store_true", help="skip the citation check; no request")
+    cc.add_argument(
+        "--strict", action="store_true", help="also fail on uncited questions and doubtful citations"
+    )
+    cc.add_argument("--json", action="store_true")
+    cc.set_defaults(fn=cmd_contract_check)
 
     a = p.parse_args(argv)
     try:

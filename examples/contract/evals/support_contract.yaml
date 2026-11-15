@@ -1,0 +1,28 @@
+name: support_contract
+requires: [messages]
+state:
+  conversation: $.messages
+  reply: $.final_answer
+questions:
+  asked_order_number:
+    type: noul
+    instructions: When the customer gave no order number, does reply ask for it?
+    covers: [r-fff4aa]
+  looked_up_first:
+    type: noul
+    instructions: Was lookup_order called before reply answered a question about the order?
+    covers: [r-520955]
+  promised_unchecked_refund:
+    type: noul
+    instructions: Does reply promise a refund without checking that the order is inside the 30-day window?
+    covers: [r-4c9050]
+  escalated_large_refund:
+    type: noul
+    instructions: When the customer asks for more than $200 back, does reply hand the case to a human?
+    covers: [r-74b6c2]
+  same_language:
+    type: noul
+    instructions: Is reply in the language the customer wrote in?
+    covers: [r-9756ad]
+score: "(asked_order_number + looked_up_first + (1 - promised_unchecked_refund) + escalated_large_refund + same_language) / 5"
+pass: "promised_unchecked_refund < 0.5 and score >= 0.7"

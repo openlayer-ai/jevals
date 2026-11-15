@@ -71,6 +71,17 @@ per thing. Keep state small: you pay for input tokens only.
 Python equivalent: subclass jevals.Eval with state(s) -> dict, questions(s) -> {{id: Noul|Choice|Score}},
 reduce(answers, s) -> Result(score=, passed=, detail=, evidence=). Or NoulEval / ScoreEval / ChoiceEval for one question.
 
+## Contract evals (tests from the agent's system prompt)
+jevals contract rules prompt.md -o contract.yaml      # rules with stable ids; --no-model keeps every line
+# edit contract.yaml freely; move a line that isn't a rule (or a merged-away rule) under excluded:
+# write evals; each question cites the rules it tests:
+#   questions: {{promised: {{type: noul, instructions: "Does reply promise a refund before checking the window?", covers: [r-4c9050]}}}}
+#   covers: [observed] + why: "..." for behaviour the prompt implies but doesn't state
+jevals contract check contract.yaml evals/ [--prompt prompt.md] [--strict]
+# fails on uncovered rules, stale citations, rules edited under their old id, a changed prompt; --strict also on uncited / doubtful
+One rule per question. Write it so true means the agent did the named thing. Check an absence as a
+question that is true when the violation happened, never "No ..." inside the question.
+
 ## CLI
 jevals run traces.jsonl --evals agent.tool_choice,agent.grounded,security.phi,evals/mine.yaml [--out results.jsonl]
 jevals list | jevals describe grounded | jevals validate evals/*.yaml | jevals schema | jevals docs --llm

@@ -381,6 +381,19 @@ Or write the same thing in YAML and check it with `jevals validate evals/*.yaml`
 
 A few things that have held up, mostly from TypeSafe's prompting docs and from trying to get these evals to agree with hand labels. Ask one question per thing you want to know, rather than one question that bundles several. Describe the options instead of labeling them. Add an "insufficient evidence" option when the state might not contain the answer. Keep the state small, since input tokens are the only thing you pay for. Set thresholds per action rather than per model, because a refund and a lookup shouldn't share one. And don't let the classifier become the authorizer: Jev can tell you a call looks destructive, but whether it should run depends on account state and permissions it has no way of seeing.
 
+## Contract evals
+
+An agent's system prompt is its contract. `jevals contract` turns it into rules with stable ids, so each question can say which rule it tests, and tells you when a rule has no test or a test no longer matches the prompt.
+
+```bash
+jevals contract rules prompts/support.md -o contract.yaml    # one decision-model request drops non-rules
+# your coding agent (MCP: contract_rules, author_eval, contract_check) writes evals that cite rules:
+#   covers: [r-4c9050]
+jevals contract check contract.yaml evals/ --prompt prompts/support.md
+```
+
+`check` fails on a rule nothing covers, a citation the contract doesn't have, or a prompt whose rules changed since `contract.yaml` was written. With `--strict` it also fails on questions that cite nothing and on citations the decision model doubts ("does this question test this rule?", p < 0.5). A rule's id is a hash of its text, so reordering the prompt changes nothing and rewording a rule shows up as one rule gone and one new. Rewording a rule inside `contract.yaml` while keeping its old id fails too, and names the new id: the questions citing it were written for the old wording. The decision model catches a question citing the wrong rule, not a changed detail ("order number" against "client number") inside the right one, so this check carries rewording. `contract.yaml` is yours to edit: lines the model doesn't count as rules land under `excluded:`, and moving a rule there (or a rule you merged away) keeps `check --prompt` from reporting it as new. Write one rule per question. In the tests behind #11 (one team's agents, Clef against an LLM judge on 69 criteria), the two agreed on 66, and both of Clef's misses were criteria that bundled two checks; split into one statement each, they came out right. `examples/contract/` has a support-agent prompt, its contract and evals.
+
 ## What this isn't
 
 It doesn't generate test sets, it has no dashboard, and it won't replace an LLM judge for work that needs multi-step reasoning or a written critique. The models underneath it are new and their calibration varies by task. Calibrate on your own data and keep a human on the irreversible actions.

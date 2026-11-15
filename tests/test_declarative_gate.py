@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from pathlib import Path
 
 import pytest
@@ -264,3 +265,67 @@ def test_gate_decorator_sync_and_async(messages):
         return "found"
 
     assert lookup("A1", messages=messages) == "found"
+
+
+COVERED = {
+    "name": "refund_contract",
+    "covers": ["r-4c9050"],
+    "questions": {
+        "promised": {"type": "noul", "instructions": "Does reply promise a refund?"},
+        "asked": {
+            "type": "noul",
+            "instructions": "Does reply ask for the order number?",
+            "covers": ["r-fff4aa"],
+        },
+        "apologised": {
+            "type": "noul",
+            "instructions": "Does reply apologise?",
+            "covers": ["observed"],
+            "why": "Every good trace apologises.",
+        },
+    },
+}
+
+
+def test_covers_question_level_wins_and_eval_level_is_inherited():
+    ev = DeclarativeEval(copy.deepcopy(COVERED))
+    assert ev.covers == {"promised": ["r-4c9050"], "asked": ["r-fff4aa"], "apologised": ["observed"]}
+    assert ev.why == {"apologised": "Every good trace apologises."}
+    assert set(ev.questions(None)) == {"promised", "asked", "apologised"}
+    assert ev.describe()["covers"]["asked"] == ["r-fff4aa"]
+
+
+def test_loading_does_not_mutate_the_spec_so_author_eval_keeps_covers():
+    spec = copy.deepcopy(COVERED)
+    DeclarativeEval(spec)
+    assert spec == COVERED
+
+
+def test_an_eval_without_covers_is_unchanged():
+    ev = DeclarativeEval({"name": "plain", "questions": {"q": {"type": "noul", "instructions": "?"}}})
+    assert ev.covers == {"q": []} and ev.why == {} and "covers" not in ev.describe()
+
+
+@pytest.mark.parametrize(
+    "covers, why, message",
+    [
+        (["rule-1"], None, "rule-1"),
+        ("r-4c9050", None, "list"),
+        (["observed"], None, "why"),
+    ],
+)
+def test_bad_covers_are_rejected(covers, why, message):
+    q = {"type": "noul", "instructions": "?", "covers": covers}
+    if why:
+        q["why"] = why
+    with pytest.raises(ValueError, match=message):
+        DeclarativeEval({"name": "bad", "questions": {"q": q}})
+
+
+def test_schema_documents_covers_and_why(tmp_path):
+    q = eval_schema()["properties"]["questions"]["additionalProperties"]["properties"]
+    assert "covers" in q and "why" in q
+    assert "covers" in eval_schema()["properties"]
+    p = tmp_path / "e.yaml"
+    p.write_text(yaml.safe_dump(COVERED))
+    assert load_eval(p).covers["asked"] == ["r-fff4aa"]
